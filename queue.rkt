@@ -1,6 +1,13 @@
 #lang racket
 (require racket/async-channel)
 
+;; TODO
+;; - Sign workunits on data. They couldn't cause side effects anyway.
+;; - Provide queue-workunit-on-complete-thunks, and be sure to run
+;;   them right away when (on-complete) runs on a finished thunk.
+;; - Remove (let) and other ugly code
+
+
 ;; A queue is a list of workunits along with an asynchronous channel
 ;; that performs unsafe actions on that queue.
 (struct queue (workunits
@@ -10,7 +17,7 @@
 
 (provide/contract
  [make-queue (-> queue?)]
- [workunit-status (-> queue? workunit-key? workunit-status?)]
+ [workunit-status (-> queue? workunit-key? (or/c #f workunit-status?))]
  [workunit-client (-> queue? workunit-key? any/c)]
  [workunit-result (-> queue? workunit-key? any/c)]
  [workunit-data (-> queue? workunit-key? any/c)]
@@ -74,7 +81,8 @@
        queue
        (rest (queue-clients-waiting-for-work queue)))
       (set-queue-workunit-status! next-wu 'running)
-      (client-thunk (queue-workunit-data next-wu)))))
+      (client-thunk (queue-workunit-data next-wu))
+      (queue-dispatch-work! queue))))
 
 ;; Add work to the queue
 (define (queue-add-workunit! queue data)
