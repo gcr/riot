@@ -1,5 +1,6 @@
 #lang racket
 (require racket/async-channel
+         racket/date
          mzlib/thread
          file/md5)
 
@@ -117,6 +118,11 @@
 
 
 (define (start-queue-server port)
+  (date-display-format 'iso-8601)
+  (define (log . msg)
+    (printf "[~a] ~a\n" (date->string (current-date) (current-seconds))
+            (apply format msg))
+    (flush-output))
   (define chan (make-async-channel))
   (define q (make-queue))
   (thread (λ() (let loop () ((async-channel-get chan)) (loop))))
@@ -146,9 +152,11 @@
       (flush-output out))
     (let/ec exit
       (match-define (list 'hello-from client) (read in))
+      (define-values (my-ip your-ip) (tcp-addresses out))
+      (log "new connection: ~s ip: ~a" client your-ip)
       (let loop ()
         (match (read in)
-          [(? eof-object?) (exit)]
+          [(? eof-object?) (log "disconnect: ~a" client) (exit)]
           [(list 'workunit-info wu-key)
            (q-action
             (define wu (queue-ref q wu-key))
@@ -157,9 +165,11 @@
              (or wu (workunit wu-key #f #f #f #f #f #f)))
             (send (list 'workunit key status wu-client result last-change)))]
           [(list 'wait-for-work)
+           (log "~s is waiting for work" client)
            (q-action
             (queue-call-with-work! q client
               (errguard-λ (wu)
+                 (log "assigned ~a ta ~s" (workunit-key wu) client)
                  (send (list 'assigned-workunit
                              (workunit-key wu)
                              (workunit-data wu)))
@@ -168,8 +178,9 @@
                  )))]
           [(list 'add-workunit! data)
            (q-action
-            (send (list 'added-workunit
-                        (queue-add-workunit! q data))))]
+            (define new-key (queue-add-workunit! q data))
+            (log "new workunit: ~a" new-key)
+            (send (list 'added-workunit new-key)))]
           [(list 'monitor-workunit-completion key)
            (q-action
             (queue-on-workunit-completion
@@ -181,9 +192,10 @@
                            (workunit-status wu) ;; may be error, for ex
                            (workunit-result wu))))))]
           [(list 'complete-workunit! key error? result)
+           (log "~s finished workunit: ~a" client key)
            (q-action
             (queue-complete-workunit! q key error? result))]
-          [other (error "Wasn't expecting THIS from client!" other)])
+          [other (error "wasn't expecting this from client:" other)])
         (loop))))
-
+  (log "Listening for connections on port ~a" port)
   (run-server port handle-cxn #f))

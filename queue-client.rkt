@@ -19,12 +19,18 @@
 (struct client (out lock pending-actions) #:mutable)
 (provide/contract
  [connect-to-queue (->* (string? exact-integer?) (string?) client?)]
- [client-wu-info (-> client? string?
-                    (list/c symbol? any/c any/c any/c))]
+ [client-workunit-info (-> client? string?
+                           (list/c symbol? any/c any/c any/c))]
+ [client-call-with-workunit-info (-> client? string?
+                                     (-> symbol? any/c any/c any/c any/c)
+                                     any/c)]
  [client-wait-for-work (-> client?
-                          (list/c wu-key? any/c))]
- [client-call-with-work (-> client? (-> wu-key? any/c any/c) any/c)]
- [client-add-workunit! (-> client? serializable? wu-key?)]
+                           (list/c wu-key? any/c))]
+ [client-call-with-work (-> client?
+                            (-> wu-key? any/c any/c) any/c)]
+ [client-add-workunit (-> client? serializable? wu-key?)]
+ [client-call-with-new-workunit (-> client? serializable?
+                                    (-> wu-key? any/c) any/c)]
  [client-wait-for-finished-workunit (-> client? wu-key?
                                          (list/c wu-key? symbol? any/c))]
  [client-call-with-finished-workunit (-> client? wu-key?
@@ -38,7 +44,9 @@
 (define (client-react client datum)
   (call-with-semaphore (client-lock client)
     (λ()
-      ;; This datum should satisfy one of the pending actions.
+      ;; This datum should satisfy one of the pending actions. The
+      ;; pending action that consumes the datum will return #t.
+      ;; We will then remove it from the list.
       (define eaten-proc
         (for/first ([proc (in-list (client-pending-actions client))])
           (proc datum)))
@@ -49,21 +57,36 @@
        [else
         (error "Server sent us something we weren't expecting:" datum)]))))
 
-;; Registers 'expect' to run on the client
-(define (client-expect client proc)
+;; Registers 'expect' to run when the server sends us a datum. Proc
+;; should return #t if it consumed the datum and #f otherwise.
+(define (client-register-expector client proc)
   (call-with-semaphore (client-lock client)
     (λ()
       (set-client-pending-actions! client
-       (cons proc (client-pending-actions client))))))
+       (append (client-pending-actions client) (list proc))))))
+
+;; Block this current thread until the server sends us something that
+;; matches pattern. Then, return value. (this works because the
+;; reactor is in a different thread)
 (define-syntax-rule (client-expect/wait client pattern value)
   (begin
     (define chan (make-channel))
-    (client-expect client
+    (client-register-expector client
      (λ(datum)
        (match datum
          [pattern (channel-put chan value) #t]
          [else #f])))
   (channel-get chan)))
+
+;; Like above but returns value in its own thread when the
+;; expected thing arrives.
+(define-syntax-rule (client-expect/callback client pattern value)
+  (begin
+    (client-register-expector client
+      (λ(datum)
+        (match datum
+          [pattern (thread (λ() value)) #t]
+          [else #f])))))
 
 (define (client-send client datum)
   ;; (displayln "--> ") (printf "~s\n" datum)
@@ -73,7 +96,7 @@
 (define (connect-to-queue host port [client-name (gethostname)])
   (define-values (in out) (tcp-connect host port))
   (define cl (client out (make-semaphore 1) '()))
-  (write (list 'hello-from client-name) out)
+  (client-send cl (list 'hello-from client-name))
   (thread (λ() (let loop ()
                  (define datum (read in))
                  ;; (display "<-- ") (printf "~s\n" datum) (flush-output)
@@ -81,13 +104,21 @@
                  (loop))))
   cl)
 
-(define (client-wu-info client key)
+;; Gather info about the workunit. Costs one round-trip.
+(define (client-workunit-info client key)
   (client-send client (list 'workunit-info key))
   (client-expect/wait client
     (list 'workunit (? (curry equal? key)) status wu-client result last-change)
     (list status wu-client result last-change)))
+;; Gathers info about the workunit, but calls this function when it
+;; arrives.
+(define (client-call-with-workunit-info client key thunk)
+  (client-send client (list 'workunit-info key))
+  (client-expect/callback client
+    (list 'workunit (? (curry equal? key)) status wu-client result last-change)
+    (thunk status wu-client result last-change)))
 
-;; Blocks until we have work.
+;; Blocks until we have work. Costs one round-trip.
 (define (client-wait-for-work client)
   (client-send client (list 'wait-for-work))
   (client-expect/wait client
@@ -99,19 +130,21 @@
 ;; the client's reactor thread)
 (define (client-call-with-work client thunk)
   (client-send client (list 'wait-for-work))
-  (client-expect client
-    (λ(datum)
-      (match datum
-        [(list 'assigned-workunit key data)
-         (thread (λ() (thunk key data)))
-         #t]
-        [else #f]))))
+  (client-expect/callback client
+    (list 'assigned-workunit key data)
+    (thunk key data)))
 
-(define (client-add-workunit! client data)
+;; Returns the key of the new workunit.
+(define (client-add-workunit client data)
   (client-send client (list 'add-workunit! data))
   (client-expect/wait client
     (list 'added-workunit key)
     key))
+(define (client-call-with-new-workunit client data thunk)
+  (client-send client (list 'add-workunit! data))
+  (client-expect/callback client
+    (list 'added-workunit key)
+    (thunk key)))
 
 (define (client-wait-for-finished-workunit client key)
   (client-send client (list 'monitor-workunit-completion key))
@@ -119,16 +152,12 @@
     (list 'workunit-complete (? (curry equal? key) wu-key) status result)
     (list wu-key status result)))
 
-;; Again, the above, but doesn't block.
 (define (client-call-with-finished-workunit client key thunk)
   (client-send client (list 'monitor-workunit-completion key))
-  (client-expect client
-    (λ(datum)
-      (match datum
-        [(list 'workunit-complete (? (curry equal? key) wu-key) status result)
-         (thread (λ() (thunk wu-key status result)))
-         #t]
-        [else #f]))))
+  (client-expect/callback client
+    (list 'workunit-complete (? (curry equal? key) wu-key) status result)
+    (thunk wu-key status result)))
 
+;; Mark this one as completed.
 (define (client-complete-workunit! client key error? result)
   (client-send client (list 'complete-workunit! key error? result)))
