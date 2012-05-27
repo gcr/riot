@@ -28,7 +28,8 @@
  ;; don't use these:
  [make-queue (-> queue?)]
  [queue-ref (-> queue? workunit-key? (or/c workunit? #f))]
- [queue-add-workunit! (-> queue? any/c workunit-key?)]
+ [make-workunit-key (-> any/c workunit-key?)]
+ [queue-add-workunit! (-> queue? workunit-key? any/c any/c)]
  [queue-on-workunit-completion (-> queue? workunit-key? any/c any/c)]
  [queue-call-with-work! (-> queue? any/c (-> workunit-key? boolean?) any/c)]
  [queue-complete-workunit! (-> queue? workunit-key? boolean? any/c any/c)])
@@ -72,8 +73,7 @@
       (queue-dispatch-work! queue))))
 
 ;; Add work to the queue
-(define (queue-add-workunit! queue data)
-  (define key (make-workunit-key data))
+(define (queue-add-workunit! queue key data)
   (unless (hash-has-key? (queue-workunits queue) key)
     (define wu (workunit key 'waiting #f #f data '()
                          (current-inexact-milliseconds)))
@@ -169,7 +169,7 @@
            (q-action
             (queue-call-with-work! q client
               (errguard-λ (wu)
-                 (log "assigned ~a ta ~s" (workunit-key wu) client)
+                 (log "assigned ~a to ~s" (workunit-key wu) client)
                  (send (list 'assigned-workunit
                              (workunit-key wu)
                              (workunit-data wu)))
@@ -178,8 +178,9 @@
                  )))]
           [(list 'add-workunit! data)
            (q-action
-            (define new-key (queue-add-workunit! q data))
+            (define new-key (make-workunit-key data))
             (log "new workunit: ~a" new-key)
+            (queue-add-workunit! q new-key data)
             (send (list 'added-workunit new-key)))]
           [(list 'monitor-workunit-completion key)
            (q-action
@@ -192,7 +193,9 @@
                            (workunit-status wu) ;; may be error, for ex
                            (workunit-result wu))))))]
           [(list 'complete-workunit! key error? result)
-           (log "~s finished workunit: ~a" client key)
+           (if error?
+               (log "~s FAILED workunit: ~a" client key)
+               (log "~s completed workunit: ~a" client key))
            (q-action
             (queue-complete-workunit! q key error? result))]
           [other (error "wasn't expecting this from client:" other)])
