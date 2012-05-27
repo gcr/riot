@@ -17,21 +17,21 @@
 (define wu-key? any/c)
 
 (struct client (out lock pending-actions) #:mutable)
-TODO PLEASE FIX THESE CONTRACTS:
 (provide/contract
  [connect-to-queue (->* (string? exact-integer?) (string?) client?)]
  [client-wu-info (-> client? string?
-                    (list/c wu-key? any/c any/c any/c any/c any/c))]
+                    (list/c symbol? any/c any/c any/c))]
  [client-wait-for-work (-> client?
                           (list/c wu-key? any/c))]
- [client-call-with-work (-> client?
-                          (-> wu-key? any/c any/c))]
+ [client-call-with-work (-> client? (-> wu-key? any/c any/c) any/c)]
  [client-add-workunit! (-> client? serializable? wu-key?)]
- [client-wait-for-workunit! (-> client? serializable? wu-key?
-                                (list/c wu-key? symbol? any/c))]
+ [client-wait-for-finished-workunit (-> client? wu-key?
+                                         (list/c wu-key? symbol? any/c))]
  [client-call-with-finished-workunit (-> client? wu-key?
-                                  (-> wu-key? any/c any/c any/c))]
- [client-complete-workunit! (-> client? wu-key? boolean? serializable?)])
+                                         (-> wu-key? any/c any/c any/c)
+                                         any/c)]
+ [client-complete-workunit! (-> client? wu-key? boolean? serializable?
+                                any/c)])
 
 ;; React from a message sent by the server. Only let the event loop
 ;; call this; don't call it yourself.
@@ -108,12 +108,12 @@ TODO PLEASE FIX THESE CONTRACTS:
         [else #f]))))
 
 (define (client-add-workunit! client data)
-  (client-send client (list 'add-workunit! (serialize data)))
+  (client-send client (list 'add-workunit! data))
   (client-expect/wait client
     (list 'added-workunit key)
     key))
 
-(define (client-wait-for-workunit! client key)
+(define (client-wait-for-finished-workunit client key)
   (client-send client (list 'monitor-workunit-completion key))
   (client-expect/wait client
     (list 'workunit-complete (? (curry equal? key) wu-key) status result)
