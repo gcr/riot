@@ -7,8 +7,8 @@
   (displayln "Running")
   (for/work ([i (in-range 10)])
             (displayln "Hello from client")
-            (sleep 1)
-            (+ 5 i)))
+            (sleep 30)
+            (* 5 i)))
 
 (module+ main
   ;; Note that we're NOT running this in the toplevel. If you use the

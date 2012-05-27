@@ -36,7 +36,8 @@
  [queue-add-workunit! (-> queue? workunit-key? any/c any/c)]
  [queue-on-workunit-completion (-> queue? workunit-key? any/c any/c)]
  [queue-call-with-work! (-> queue? any/c (-> workunit-key? boolean?) any/c)]
- [queue-complete-workunit! (-> queue? workunit-key? boolean? any/c any/c)])
+ [queue-complete-workunit! (-> queue? workunit-key? boolean? any/c any/c)]
+ [remove-running-workunits! (-> queue? any/c any/c)])
 
 (define (make-queue)
   (queue (make-hash) (list)))
@@ -118,6 +119,14 @@
       (thunk wu))
     (set-workunit-on-complete-thunks! wu '())))
 
+;; Re-assign all workunits for client to other, better clients.
+(define (remove-running-workunits! q client)
+  (for ([(key wu) (in-hash (queue-workunits q))]
+        #:when (and (equal? client (workunit-client wu))
+                    (eq? 'running (workunit-status wu))))
+    (set-workunit-status! wu 'waiting))
+  (queue-dispatch-work! q))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The actual server.
@@ -140,10 +149,11 @@
          (with-handlers ([exn:fail:network? (λ(ex) (displayln "Net err"))]
                          [exn:fail?
                           (λ(ex)
-                            ((error-display-handler)
-                             (format "Client error: ~a"
-                                     (exn-message ex))
-                             ex)
+                            (log "Client error: ~a" (exn-message ex))
+                            ;; ((error-display-handler)
+                            ;;  (format "Client error: ~a"
+                            ;;          (exn-message ex))
+                            ;;  ex)
                             (flush-output)
                             (custodian-shutdown-all handler-cust)
                             #f)])
@@ -156,56 +166,74 @@
       (write datum out)
       (display "\n" out)
       (flush-output out))
-    (let/ec exit
-      (match-define (list 'hello-from client) (read in))
-      (define-values (my-ip your-ip) (tcp-addresses out))
-      (log "new connection: ~s ip: ~a" client your-ip)
-      (let loop ()
-        (match (read in)
-          [(? eof-object?) (log "disconnect: ~a" client) (exit)]
-          [(list 'workunit-info wu-key)
-           (q-action
-            (define wu (queue-ref q wu-key))
-            (match-define
-             (workunit key status wu-client result data _ last-change)
-             (or wu (workunit wu-key #f #f #f #f #f #f)))
-            (send (list 'workunit key status wu-client result last-change)))]
-          [(list 'wait-for-work)
-           (log "~s is waiting for work" client)
-           (q-action
-            (queue-call-with-work! q client
-              (errguard-λ (wu)
-                 (log "assigned ~a to ~s" (workunit-key wu) client)
-                 (send (list 'assigned-workunit
-                             (workunit-key wu)
-                             (workunit-data wu)))
-                 (flush-output)
-                 #t ;; accept this one
-                 )))]
-          [(list 'add-workunit! data)
-           (q-action
-            (define new-key (make-workunit-key data))
-            (log "workunit: ~a" new-key)
-            (queue-add-workunit! q new-key data)
-            (send (list 'added-workunit new-key)))]
-          [(list 'monitor-workunit-completion key)
-           (q-action
-            (queue-on-workunit-completion
-             q
-             key
-             (errguard-λ (wu)
-               (send (list 'workunit-complete
-                           key
-                           (workunit-status wu) ;; may be error, for ex
-                           (workunit-client wu)
-                           (workunit-result wu))))))]
-          [(list 'complete-workunit! key error? result)
-           (if error?
-               (log "~s FAILED workunit: ~a" client key)
-               (log "~s completed workunit: ~a" client key))
-           (q-action
-            (queue-complete-workunit! q key error? result))]
-          [other (error "wasn't expecting this from client:" other)])
-        (loop))))
+    (match-define (list 'hello-from client-name) (read in))
+    (define client (uniquify client-name))
+    (define-values (my-ip your-ip) (tcp-addresses out))
+    (log "new connection: ~s ip: ~a" client your-ip)
+    (dynamic-wind
+      void
+      (λ()
+        (let/ec exit
+          (let loop ()
+            (match (read in)
+              [(? eof-object?) (log "disconnect: ~a" client) (exit)]
+              [(list 'workunit-info wu-key)
+               (q-action
+                (define wu (queue-ref q wu-key))
+                (match-define
+                 (workunit key status wu-client result data _ last-change)
+                 (or wu (workunit wu-key #f #f #f #f #f #f)))
+                (send (list 'workunit key status wu-client result last-change)))]
+              [(list 'wait-for-work)
+               (log "~s is waiting for work" client)
+               (q-action
+                (queue-call-with-work! q client
+                                       (errguard-λ (wu)
+                                                   (log "assigned ~a to ~s" (workunit-key wu) client)
+                                                   (send (list 'assigned-workunit
+                                                               (workunit-key wu)
+                                                               (workunit-data wu)))
+                                                   (flush-output)
+                                                   #t ;; accept this one
+                                                   )))]
+              [(list 'add-workunit! data)
+               (q-action
+                (define new-key (make-workunit-key data))
+                (log "workunit: ~a" new-key)
+                (queue-add-workunit! q new-key data)
+                (send (list 'added-workunit new-key)))]
+              [(list 'monitor-workunit-completion key)
+               (q-action
+                (queue-on-workunit-completion
+                 q
+                 key
+                 (errguard-λ (wu)
+                             (send (list 'workunit-complete
+                                         key
+                                         (workunit-status wu) ;; may be error, for ex
+                                         (workunit-client wu)
+                                         (workunit-result wu))))))]
+              [(list 'complete-workunit! key error? result)
+               (if error?
+                   (log "~s FAILED workunit: ~a" client key)
+                   (log "~s completed workunit: ~a" client key))
+               (q-action
+                (queue-complete-workunit! q key error? result))]
+              [other (error "wasn't expecting this from client:" other)])
+            (loop))))
+      ;; this is the last action for dynamic-unwind.
+      ;; note that i can't use errorguard-λ because not everything
+      ;; is set up yet.
+      (λ()
+        (log "Re-assigning all of ~s's workunits" client)
+        (q-action (remove-running-workunits! q client)))))
+
   (log "Listening for connections on port ~a" port)
   (run-server port handle-cxn #f))
+
+(define (uniquify str)
+  (string-append str "-"
+                 (list->string
+                  (for/list ([i 5])
+                    (define chars (string->list "bcdfghjklmnpqrstvwxyz"))
+                    (list-ref chars (inexact->exact (floor (* (random) (length chars)))))))))
