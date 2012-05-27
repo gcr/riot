@@ -196,6 +196,7 @@
                (send (list 'workunit-complete
                            key
                            (workunit-status wu) ;; may be error, for ex
+                           (workunit-client wu)
                            (workunit-result wu))))))]
           [(list 'complete-workunit! key error? result)
            (if error?
