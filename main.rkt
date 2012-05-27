@@ -45,9 +45,8 @@
          #`(do-work/serial-lambda #,t
               (serial-lambda (tag)
                  (cond
-                  [(equal? tag #,t)
-                   body ...]
-                  [else (error 'worker "This worker has the wrong version of the code! Please restart the worker with the correct version.")]))))]))
+                  [(equal? tag #,t) body ...]
+                  [else (error 'worker "Code mismatch: This worker has a different version of the code than the master does. Please restart this worker with the correct version.")]))))]))
 
 (define-syntax-rule (for/work for-decl body ...)
   (let ([workunits
@@ -82,7 +81,7 @@
       result
       ;; Error
       (error 'wait-until-done
-             "Workunit failed: ~a\nClient: ~s\nMessage: ~a"
+             "Workunit ~a failed\nWorker: ~s\nMessage: ~a"
              workunit
              client-name
              result)))
