@@ -1,6 +1,11 @@
-#lang racket
+#lang racket/base
 
-(require mzlib/os racket/serialize)
+(require racket/contract
+         racket/tcp
+         racket/match
+         racket/function
+         mzlib/os
+         racket/serialize)
 
 ;; A queue client manages a connection to a queue server.
 

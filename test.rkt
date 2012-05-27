@@ -1,4 +1,4 @@
-#lang racket
+#lang nonexistent
 (require (planet gcr/bonk))
 
 (define queue (queue "localhost" 6344))

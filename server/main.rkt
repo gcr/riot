@@ -1,5 +1,9 @@
-#lang racket
-(require racket/async-channel
+#lang racket/base
+(require racket/contract
+         racket/list
+         racket/match
+         racket/tcp
+         racket/async-channel
          racket/date
          mzlib/thread
          file/md5)
@@ -180,7 +184,7 @@
           [(list 'add-workunit! data)
            (q-action
             (define new-key (make-workunit-key data))
-            (log "new workunit: ~a" new-key)
+            (log "workunit: ~a" new-key)
             (queue-add-workunit! q new-key data)
             (send (list 'added-workunit new-key)))]
           [(list 'monitor-workunit-completion key)

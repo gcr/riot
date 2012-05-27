@@ -1,8 +1,9 @@
-#lang racket
+#lang racket/base
 
 ;; Call this file to start a new queue server!
 
-(require "main.rkt")
+(require racket/cmdline
+         "main.rkt")
 
 (module+ main
   (define port (make-parameter 2355))

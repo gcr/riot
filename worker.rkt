@@ -1,7 +1,9 @@
-#lang racket
+#lang racket/base
 
 (require "client.rkt"
          racket/date
+         racket/cmdline
+         racket/match
          mzlib/os)
 
 (define (process-workunit q key serialized-data)
