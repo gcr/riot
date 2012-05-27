@@ -88,7 +88,8 @@
   (define client-thunk-data (list client thunk))
   (set-queue-clients-waiting-for-work!
    queue
-   (cons client-thunk-data (queue-clients-waiting-for-work queue)))
+   (append (queue-clients-waiting-for-work queue)
+           (list client-thunk-data)))
   (queue-dispatch-work! queue))
 
 ;; Add a thunk to be called when the given workunit finishes.
