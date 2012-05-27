@@ -1,51 +1,82 @@
 #lang racket
 
 (require "client.rkt"
+         (for-syntax file/md5)
          racket/serialize
+         mzlib/os
          web-server/lang/serial-lambda)
 
 (define workunit? string?)
-(provide do-work connect-to-queue)
+(provide current-client
+         do-work
+         for/work
+         )
 (provide/contract
  ;; Ask for workers to dynamic-require the module path and call the
  ;; symbol with the given args. Registering this workunit costs one
  ;; roundtrip.
- [do-work/call (->* (client? module-path? symbol?)
+ [connect-to-riot-server!
+  (->* (string?) (exact-integer? string?) any/c)]
+ [do-work/call (->* (module-path? symbol?)
                     #:rest (listof serializable?)
                     workunit?)]
  ;; Asks workers to eval the given datum. Costs one roundtrip.
- [do-work/eval (-> client? serializable? workunit?)]
+ [do-work/eval (-> serializable? workunit?)]
  ;; Asks workers to evaluate the given serial-lambda.
- [do-work/serial-lambda (-> client? serializable? workunit?)]
+ [do-work/serial-lambda (-> serializable? any/c workunit?)]
  ;; Wait until the cluster has finished the given workunit, and
  ;; either erorr with the given message or throw an exception
- [wait-until-done (-> client? workunit? any/c)]
+ [wait-until-done (-> workunit? any/c)]
  ;; Calls the given thunk in a new thread when the workunit completes.
  ;; The first argument is #t if it error'd and #f if not. The second
  ;; argument is the client that finished this workunit, and the final
  ;; argument is the result.
- [call-when-done (-> client? workunit? (-> boolean? any/c any/c any/c)
+ [call-when-done (-> workunit? (-> boolean? any/c any/c any/c)
                      any/c)])
 
-(define-syntax-rule (do-work client body ...)
-  (do-work/serial-lambda client (serial-lambda () body ...)))
+(define-syntax (do-work stx)
+  (syntax-case stx ()
+      [(_ body ...)
+       (let ([t (bytes->string/utf-8
+                 (md5 (format "~s" (syntax->datum stx))))])
+         ;; A 'tag' is an md5sum of the body of the code. Checking
+         ;; this ensures that the client will run the same version of
+         ;; the code that master does.
+         #`(do-work/serial-lambda #,t
+              (serial-lambda (tag)
+                 (cond
+                  [(equal? tag #,t)
+                   body ...]
+                  [else (error 'worker "This worker has the wrong version of the code! Please restart the worker with the correct version.")]))))]))
 
-(define (do-work/call client module-path symbol . args)
-  (client-add-workunit client
+(define-syntax-rule (for/work for-decl body ...)
+  (let ([workunits
+         (for/list for-decl (do-work body ...))])
+    (for/list ([p workunits]) (wait-until-done p))))
+
+(define current-client (make-parameter "not connected to a server"))
+(define (connect-to-riot-server! host [port 2355] [client-name (gethostname)])
+  (current-client (connect-to-queue host port client-name)))
+
+
+(define (do-work/call module-path symbol . args)
+  (client-add-workunit (current-client)
                        (list* 'call-module module-path symbol
                               (map cleanup-serialize args))))
 
-(define (do-work/serial-lambda client lambda)
-  (client-add-workunit client
-                       (list* 'serial-lambda (cleanup-serialize lambda))))
+(define (do-work/serial-lambda nonce lambda)
+  (client-add-workunit (current-client)
+                       (list 'serial-lambda nonce
+                             (cleanup-serialize lambda))))
 
-(define (do-work/eval client datum)
-  (client-add-workunit client
-                       (list* 'eval datum)))
+(define (do-work/eval datum)
+  (client-add-workunit (current-client)
+                       (list 'eval datum)))
 
-(define (wait-until-done client workunit)
+(define (wait-until-done workunit)
   (match-define (list key status client-name result)
-                (client-wait-for-finished-workunit client workunit))
+                (client-wait-for-finished-workunit
+                 (current-client) workunit))
   (if (equal? status 'done)
       ;; Finished
       result
@@ -56,12 +87,12 @@
              client-name
              result)))
 
-(define (call-when-done client workunit thunk)
-  (client-call-with-finished-workunit client workunit
+(define (call-when-done workunit thunk)
+  (client-call-with-finished-workunit (current-client) workunit
     (λ (key status client-name result)
        (if (equal? status 'done)
-           (thunk #f client result)
-           (thunk #t client result)))))
+           (thunk #f client-name result)
+           (thunk #t client-name result)))))
 
 (define (cleanup-serialize datum)
   ;; Serialize datum, while being sure to clean up the paths
