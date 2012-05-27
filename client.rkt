@@ -23,7 +23,8 @@
 
 (struct client (out lock pending-actions) #:mutable)
 (provide/contract
- [connect-to-queue (->* (string? exact-integer?) (string?) client?)]
+ [client? (-> any/c boolean?)]
+ [connect-to-queue (->* (string?) (exact-integer? string?) client?)]
  [client-workunit-info (-> client? string?
                            (list/c symbol? any/c any/c any/c))]
  [client-call-with-workunit-info (-> client? string?
@@ -37,9 +38,9 @@
  [client-call-with-new-workunit (-> client? serializable?
                                     (-> wu-key? any/c) any/c)]
  [client-wait-for-finished-workunit (-> client? wu-key?
-                                         (list/c wu-key? symbol? any/c))]
+                                         (list/c wu-key? symbol? any/c any/c))]
  [client-call-with-finished-workunit (-> client? wu-key?
-                                         (-> wu-key? any/c any/c any/c)
+                                         (-> wu-key? symbol? any/c any/c any/c)
                                          any/c)]
  [client-complete-workunit! (-> client? wu-key? boolean? serializable?
                                 any/c)])
@@ -101,7 +102,7 @@
   (write datum (client-out client))
   (flush-output (client-out client)))
 
-(define (connect-to-queue host port [client-name (gethostname)])
+(define (connect-to-queue host [port 2355] [client-name (gethostname)])
   (define-values (in out) (tcp-connect host port))
   (define cl (client out (make-semaphore 1) '()))
   (client-send cl (list 'hello-from client-name))
@@ -157,13 +158,15 @@
 (define (client-wait-for-finished-workunit client key)
   (client-request-response client
     (list 'monitor-workunit-completion key)
-    (list 'workunit-complete (? (curry equal? key) wu-key) status result)
-    (list wu-key status result)))
+    (list 'workunit-complete
+          (? (curry equal? key) wu-key) status client result)
+    (list wu-key status client result)))
 
 (define (client-call-with-finished-workunit client key thunk)
   (client-expect/callback client
-    (list 'workunit-complete (? (curry equal? key) wu-key) status result)
-    (thunk wu-key status result))
+    (list 'workunit-complete
+          (? (curry equal? key) wu-key) status client result)
+    (thunk wu-key status client result))
   (client-send client (list 'monitor-workunit-completion key)))
 
 ;; Mark this one as completed.
