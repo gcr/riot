@@ -47,15 +47,12 @@
       ;; This datum should satisfy one of the pending actions. The
       ;; pending action that consumes the datum will return #t.
       ;; We will then remove it from the list.
-      (printf "procs is currently: ~s\n"
-              (client-pending-actions client))
       (define eaten-proc
         (for/first ([proc (in-list (client-pending-actions client))]
                     #:when (proc datum))
           proc))
       (cond
        [eaten-proc
-        (printf "removing proc")
         (set-client-pending-actions! client
          (remove eaten-proc (client-pending-actions client)))]
        [else
@@ -95,7 +92,7 @@
           [else #f])))))
 
 (define (client-send client datum)
-  (display "--> ") (printf "~s\n" datum)
+  ;;(display "--> ") (printf "~s\n" datum)
   (write datum (client-out client))
   (flush-output (client-out client)))
 
@@ -105,7 +102,7 @@
   (client-send cl (list 'hello-from client-name))
   (thread (λ() (let loop ()
                  (define datum (read in))
-                 (display "<-- ") (printf "~s\n" datum) (flush-output)
+                 ;;(display "<-- ") (printf "~s\n" datum) (flush-output)
                  (client-react cl datum)
                  (loop))))
   cl)
