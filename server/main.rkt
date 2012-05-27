@@ -78,7 +78,8 @@
 
 ;; Add work to the queue
 (define (queue-add-workunit! queue key data)
-  (unless (hash-has-key? (queue-workunits queue) key)
+  (when (or (not (hash-has-key? (queue-workunits queue) key))
+            (equal? 'error (workunit-status (queue-ref queue key))))
     (define wu (workunit key 'waiting #f #f data '()
                          (current-inexact-milliseconds)))
     (hash-set! (queue-workunits queue) key wu)
