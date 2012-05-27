@@ -17,18 +17,21 @@
 (define wu-key? any/c)
 
 (struct client (out lock pending-actions) #:mutable)
-#;
+TODO PLEASE FIX THESE CONTRACTS:
 (provide/contract
  [connect-to-queue (->* (string? exact-integer?) (string?) client?)]
  [client-wu-info (-> client? string?
-                    (-> wu-key? any/c any/c any/c any/c any/c))]
- [client-wait-for-work (-> client? string?
+                    (list/c wu-key? any/c any/c any/c any/c any/c))]
+ [client-wait-for-work (-> client?
+                          (list/c wu-key? any/c))]
+ [client-call-with-work (-> client?
                           (-> wu-key? any/c any/c))]
- [add-workunit! (-> client? serializable?
-                    (-> wu-key? any/c))]
- [monitor-workunit-completion (-> client? wu-key?
+ [client-add-workunit! (-> client? serializable? wu-key?)]
+ [client-wait-for-workunit! (-> client? serializable? wu-key?
+                                (list/c wu-key? symbol? any/c))]
+ [client-call-with-finished-workunit (-> client? wu-key?
                                   (-> wu-key? any/c any/c any/c))]
- [complete-workunit! (-> client? wu-key? boolean? any/c)])
+ [client-complete-workunit! (-> client? wu-key? boolean? serializable?)])
 
 ;; React from a message sent by the server. Only let the event loop
 ;; call this; don't call it yourself.
@@ -81,15 +84,51 @@
 (define (client-wu-info client key)
   (client-send client (list 'workunit-info key))
   (client-expect/wait client
-    (list 'workunit key status wu-client result last-change)
-    (list key status wu-client result last-change)))
+    (list 'workunit (? (curry equal? key)) status wu-client result last-change)
+    (list status wu-client result last-change)))
 
-;;  [client-wu-info (-> client? string?
-;;                     (-> wu-key? any/c any/c any/c any/c any/c))]
-;;  [client-wait-for-work (-> client? string?
-;;                           (-> wu-key? any/c any/c))]
-;;  [add-workunit! (-> client? serializable?
-;;                     (-> wu-key? any/c))]
-;;  [monitor-workunit-completion (-> client? wu-key?
-;;                                   (-> wu-key? any/c any/c any/c))]
-;;  [complete-workunit! (-> client? wu-key? boolean? any/c)])
+;; Blocks until we have work.
+(define (client-wait-for-work client)
+  (client-send client (list 'wait-for-work))
+  (client-expect/wait client
+    (list 'assigned-workunit key data)
+    (list key data)))
+
+;; Like client-wait-for-work, but doesn't block. Will call thunk in
+;; its own thread. (I don't want your bad error handling to screw up
+;; the client's reactor thread)
+(define (client-call-with-work client thunk)
+  (client-send client (list 'wait-for-work))
+  (client-expect client
+    (λ(datum)
+      (match datum
+        [(list 'assigned-workunit key data)
+         (thread (λ() (thunk key data)))
+         #t]
+        [else #f]))))
+
+(define (client-add-workunit! client data)
+  (client-send client (list 'add-workunit! (serialize data)))
+  (client-expect/wait client
+    (list 'added-workunit key)
+    key))
+
+(define (client-wait-for-workunit! client key)
+  (client-send client (list 'monitor-workunit-completion key))
+  (client-expect/wait client
+    (list 'workunit-complete (? (curry equal? key) wu-key) status result)
+    (list wu-key status result)))
+
+;; Again, the above, but doesn't block.
+(define (client-call-with-finished-workunit client key thunk)
+  (client-send client (list 'monitor-workunit-completion key))
+  (client-expect client
+    (λ(datum)
+      (match datum
+        [(list 'workunit-complete (? (curry equal? key) wu-key) status result)
+         (thread (λ() (thunk wu-key status result)))
+         #t]
+        [else #f]))))
+
+(define (client-complete-workunit! client key error? result)
+  (client-send client (list 'complete-workunit! key error? result)))
