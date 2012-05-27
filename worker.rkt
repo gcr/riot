@@ -1,6 +1,6 @@
 #lang racket
 
-(require "queue-client.rkt"
+(require "client.rkt"
          racket/date
          mzlib/os)
 
