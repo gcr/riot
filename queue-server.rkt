@@ -3,6 +3,8 @@
          mzlib/thread
          "queue.rkt")
 
+(provide start-queue-server)
+
 (define (start-queue-server port)
   (define chan (make-async-channel))
   (define q (make-queue))
@@ -32,18 +34,18 @@
       (display "\n" out)
       (flush-output out))
     (let/ec exit
+      (match-define (list 'hello-from client) (read in))
       (let loop ()
-        (flush-output out)
         (match (read in)
           [(? eof-object?) (exit)]
           [(list 'workunit-info wu-key)
            (q-action
             (define wu (queue-ref q wu-key))
             (match-define
-             (workunit key status client result data _ last-change)
+             (workunit key status wu-client result data _ last-change)
              (or wu (workunit wu-key #f #f #f #f #f #f)))
-            (send (list 'workunit key status client result last-change)))]
-          [(list 'wait-for-work client)
+            (send (list 'workunit key status wu-client result last-change)))]
+          [(list 'wait-for-work)
            (q-action
             (queue-call-with-work! q client
               (errguard-λ (wu)
