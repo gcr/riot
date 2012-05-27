@@ -9,6 +9,7 @@
   ;; Parse it
   ;; Run it, with error handling
   ;; Submit results or failure message
+  (sleep 1)
   (client-complete-workunit! q key #f 42)
   )
 
