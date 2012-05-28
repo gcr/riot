@@ -28,7 +28,7 @@ TODO: change error? to success?
 
 
 
-@section{Getting started}
+@section{Quick start}
 
 - Example: Something useful, but slow
 
@@ -79,31 +79,49 @@ Constraints on (do-work) and (for/work):
 - Lower-level client API
 
 
+-------
 #lang racket
-(require mzlib/os
-         (planet gcr/riot))
-
-
-(define (run)
-  (displayln "Running")
-  (for/work ([i (in-range 10)])
-            (displayln "Hello from client")
-            (sleep 30)
-            (* 5 i)))
-
+(require (planet gcr/riot))
+(define dictionary
+  (for/set ([word (in-list (file->lines "/usr/share/dict/words"))]
+            #:when (>= (string-length word) 3))
+           word))
+(define (word-combinations)
+   (apply append ;; This flattens the list
+          (for/work ([first-word (in-set dictionary)])
+            (for/list ([second-word (in-set dictionary)]
+                       #:when (set-member? dictionary
+                                           (string-append first-word
+                                                          second-word)))
+              (printf "Found ~s-~s\n" first-word second-word)
+              (flush-output)
+              (cons first-word second-word)))))
 (module+ main
-  ;; Note that we're NOT running this in the toplevel. If you use the
-  ;; special `do-work' form, workers will (require) the module that
-  ;; contains the code to run, and we don't want them submitting their
-  ;; own workunits.
-  (connect-to-riot-server! "localhost" 2355)
-  (run))
+  (connect-to-riot-server! "localhost")
+  (define words (time (word-combinations)))
+  (printf "There are ~a words.\n" (length words))
+  (write (take (shuffle words) 20))
+  (newline))
+
+--------
+
+With ???? workers, I get 105 workunits per second.
+9 workers on alfred (running queue server),
+3 jarvis,
+4 lurch,
+4 kato,
+
+= 20 total.
 
 $ ~/racket/bin/racket dict.rkt
-cpu time: 36286 real time: 2533978 gc time: 1648
-((bra . ids) (bra . ins) (bra . king) (bra . vest) (bra . very) (era . sure) (era . sing) (Ara . fat) (Ara . rat) (Ara . rat's) (Ara . fat's) (qua . hog) (qua . shed) (qua . king) (qua . hogs) (qua . shes) (qua . very) (qua . train) (qua . inter) (qua . hog's) (qua . drilling) (qua . trains) (qua . drilled) (boa . ting) (boa . sting) (Ana . baptist) (spa . red) (spa . ring) (spa . ding) (spa . rest) (spa . rely) (Lea . key) (Lea . key's) (yea . sty) (lea . fed) (lea . den) (lea . shed) (lea . sing) (lea . ping) (lea . king) (lea . ding) (lea . shes) (lea . nest) (tea . red) (tea . bag) (tea . cup) (tea . pot) (tea . time) (tea . sing) (tea . ring) (tea . room) (tea . pots) (tea . cups) (tea . spoon) (tea . rooms) (tea . pot's) (tea . cup's) (tea . spoonsful) (tea . kettle's) (tea . spoonfuls) (tea . spoonful) (tea . spoon's) (tea . spoonful's) (tea . spoons) (tea . room's) (tea . time's) (tea . kettle) (tea . kettles) (sea . red) (sea . led) (sea . bed) (sea . men) (sea . man) (sea . son) (sea . way) (sea . bird) (sea . ward) (sea . weed) (sea . food) (sea . side) (sea . ting) (sea . ring) (sea . sick) (sea . sons) (sea . ways) (sea . beds) (sea . port) (sea . board) (sea . plane) (sea . shore) (sea . going) (sea . shell) (sea . wards) (sea . birds) (sea . ports) (sea . sides) (sea . way's) (sea . son's) (sea . man's) (sea . coast))
+cpu time: 51903 real time: 1121990 gc time: 1732
+There are 17658 words.
+(("nick" . "name's") ("head" . "lights") ("ran" . "sacks") ("disc" . "lose") ("build" . "ups") ("wind" . "breaks") ("hot" . "headed") ("god" . "parent") ("main" . "frame") ("fiddle" . "sticks") ("pro" . "verbs") ("Volta" . "ire") ("select" . "ions") ("trail" . "blazer") ("bat" . "ten's") ("sniff" . "led") ("over" . "joys") ("down" . "hill") ("panel" . "led") ("tempera" . "ting"))
 
 
 The second time:
- $ ~/racket/bin/racket dict.rkt
-cpu time: 27797 real time: 61069 gc time: 824
+$ ~/racket/bin/racket dict.rkt
+cpu time: 30133 real time: 63214 gc time: 772
+
+
+Without riot:
