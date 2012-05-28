@@ -3,7 +3,7 @@
 ;; Call this file to start a new queue server!
 
 (require racket/cmdline
-         "main.rkt")
+         "private/server.rkt")
 
 (module+ main
   (define port (make-parameter 2355))
