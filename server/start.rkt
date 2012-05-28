@@ -10,6 +10,6 @@
   (command-line
    #:once-each
    [("--port") p
-                    "Queue port to serve on default: 2355"
+                    "Port to serve on default: 2355"
                     (port (string->number p))])
-  (start-queue-server (port)))
+  (start-tracker-server (port)))

@@ -15,8 +15,8 @@
     (flush-output))
 
   (log "Connecting to ~a port ~a" host port)
-  (define q (connect-to-queue host port name))
-  (log "Connected")
+  (define q (connect-to-tracker host port name))
+  (log "Connected. We are ~a" (client-who-am-i q))
 
   (define (process-data serialized-data)
     (match serialized-data
@@ -70,11 +70,11 @@
 (module+ main
   (define port (make-parameter 2355))
   (define name (make-parameter (gethostname)))
-  (define queue-host
+  (define tracker-host
     (command-line
      #:once-each
      [("--port") p
-      "Queue port to connect to. Default: 2355"
+      "Port to connect to. Default: 2355"
       (port (string->number p))]
      [("--name") client-name
       "Client name to report to server. Default is this machine's hostname"
@@ -82,4 +82,4 @@
      #:args (host)
      host))
 
-  (connect-and-work queue-host (name) (port)))
+  (connect-and-work tracker-host (name) (port)))

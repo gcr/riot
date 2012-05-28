@@ -55,7 +55,7 @@
 
 (define current-client (make-parameter "not connected to a server"))
 (define (connect-to-riot-server! host [port 2355] [client-name (gethostname)])
-  (current-client (connect-to-queue host port client-name)))
+  (current-client (connect-to-tracker host port client-name)))
 
 
 (define (do-work/call module-path symbol . args)

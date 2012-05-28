@@ -21,6 +21,7 @@ TODO: Progress reporting?
 
 TODO: for/work; why does it only accept one variable in the for-clause?
 
+TODO: change error? to success?
 
 @table-of-contents[]
 

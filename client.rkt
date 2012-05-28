@@ -7,15 +7,15 @@
          mzlib/os
          racket/serialize)
 
-;; A queue client manages a connection to a queue server.
+;; A tracker client manages a connection to the tracker server.
 
 ;; Workers use this client to:
-;;  - gather workunits from the queue
+;;  - gather workunits from the tracker
 ;;  - submit completed workunit results or errors
 ;;  - wait for work, if there isn't any
 
 ;; Managers use this client to:
-;;  - submit work to the queue
+;;  - submit work to the tracker
 ;;  - check up on the status of previously issued workunits
 ;;  - wait for results from said workunits
 
@@ -24,7 +24,8 @@
 (struct client (out lock pending-actions) #:mutable)
 (provide/contract
  [client? (-> any/c boolean?)]
- [connect-to-queue (->* (string?) (exact-integer? string?) client?)]
+ [connect-to-tracker (->* (string?) (exact-integer? string?) client?)]
+ [client-who-am-i (-> client? any/c)]
  [client-workunit-info (-> client? string?
                            (list/c symbol? any/c any/c any/c))]
  [client-call-with-workunit-info (-> client? string?
@@ -102,7 +103,7 @@
   (write datum (client-out client))
   (flush-output (client-out client)))
 
-(define (connect-to-queue host [port 2355] [client-name (gethostname)])
+(define (connect-to-tracker host [port 2355] [client-name (gethostname)])
   (define-values (in out) (tcp-connect host port))
   (define cl (client out (make-semaphore 1) '()))
   (client-send cl (list 'hello-from client-name))
@@ -112,6 +113,13 @@
                  (client-react cl datum)
                  (loop))))
   cl)
+
+;; Give our assigned name
+(define (client-who-am-i client)
+  (client-request-response client
+    (list 'who-am-i)
+    (list 'you-are name)
+    name))
 
 ;; Gather info about the workunit. Costs one round-trip.
 (define (client-workunit-info client key)
