@@ -28,6 +28,7 @@ TODO: Progress reporting?
 
 TODO: change error? to success?
 
+TODO: Fix free variables and bugs!
 
 
 @section{In which we construct a networked mapreduce cluster from scratch in
@@ -296,18 +297,21 @@ your workers will attempt to generate workunits of their own! See the
 The two easiest ways of submitting workunits are @racket[do-work] and
 @racket[for/work].
 }
-@defform[(do-work (for-clause ...) body ...)]{
+@defform[(do-work body ...)]{
 
 Packages up the @racket[body ...] expressions to be evaluated in a workunit.
 This form returns instantly (after one round-trip to the tracker) and returns a
 workunit ID, a string representing a promise to do the work.
+Pass this value to @racket[wait-until-done] to return the value of the
+@racket[do-work] form.
 
 Any expressions can appear in the @racket[body ...] form as long as they:
-@itemlist{@item{Only refer to @bold{serializable values}, else the workunit
-cannot be packaged up for transmission accross the network to workers
-}@item{Do not cause and do not depend on @bold{global side effects}, else each worker
-may have different state, causing unpredictable behavior
-}}
+@itemlist{@item{...only refer to @bold{serializable values}. If a free variable
+is unserializable, the workunit cannot be packaged up for transmission accross
+the network to workers.
+}@item{...do not cause and do not depend on @bold{global
+side effects}. Otherwise, each worker may have different state, causing
+unpredictable behavior. }}
 
 The @racket[do-work] form works by wrapping all of the @racket[body ...]
 expressions inside a @racket[serial-lambda] with no arguments. This effectively
@@ -318,22 +322,62 @@ on the return trip.
 Workunits created by @racket[do-work] (and, by extension, @racket[for/work])
 can refer to free variables, like this:
 
+@codeblock{
+#lang racket
+(require (planet gcr/riot))
 
+(define (run)
+  (define master-random-number (round (* 100 (random))))
+  (define running-workunits
+    (for/list ([x (in-range 10)])
+      (do-work
+       (format "Workunit #~a: Master chose ~a, but we choose ~a."
+               x
+               master-random-number
+               (round (* 100 (random)))))))
+  (for ([workunit (in-list running-workunits)])
+    (displayln (wait-until-done workunit))))
 
-that
-contains all of the free variables in the @racket[body ...] expressions.
+(module+ main
+ (connect-to-riot-server! "localhost")
+ (run))
+}
+@verbatim{
+Workunit #0: Master chose 67.0, but we choose 27.0.
+Workunit #1: Master chose 67.0, but we choose 51.0.
+Workunit #2: Master chose 67.0, but we choose 49.0.
+Workunit #3: Master chose 67.0, but we choose 64.0.
+Workunit #4: Master chose 67.0, but we choose 62.0.
+Workunit #5: Master chose 67.0, but we choose 41.0.
+Workunit #6: Master chose 67.0, but we choose 5.0.
+Workunit #7: Master chose 67.0, but we choose 54.0.
+Workunit #8: Master chose 67.0, but we choose 100.0.
+Workunit #9: Master chose 67.0, but we choose 33.0.
+}
+In this example, the free variable @racket[master-random-number]'s value of
+67.0 has been serialized along with the @racket[do-work] body and sent to the
+workers.
 
-Free variables.
-
-Code Checking.
+To ensure that workers use the same version of the code that the master thinks
+they're using, @racket[do-work] signs the code with an md5 hash of the
+@racket[body ...] expressions. If a worker's hash of a @racket[do-work] body
+does not match the master's hash, the worker will complain. Always keep all
+worker code up to date.
 
 }
 @defform[(for/work (for-clause ...) body ...)]{
-Acts just like @racket[for/list], but arranges for each @racket[body ...]
-to run in parallell: each iteration creates a workunit using @racket[do-work]; then calls @racket[wait-until-done] on the resulting workunit.
-}
 
-- free variables
+Acts just like @racket[for/list], but arranges for each @racket[body ...] to
+run in parallell: each iteration creates a workunit using @racket[do-work];
+then calls @racket[wait-until-done] on the resulting workunit.
+
+This is essentially equivalent to:
+@codeblock{
+(let ([workunits (for/list (for-clause ...)
+                    (do-work body ...))])
+    (for/list ([p workunits]) (wait-until-done p)))
+}
+}
 
 @subsection{Restrictions and limitations}
 - Must be in a module that wokers can see; won't work from REPL

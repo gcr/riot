@@ -5,7 +5,8 @@
          racket/cmdline
          racket/match
          racket/serialize
-         mzlib/os)
+         mzlib/os
+         compiler/cm)
 
 (define (connect-and-work host name port)
   (date-display-format 'iso-8601)
