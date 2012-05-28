@@ -1,0 +1,5 @@
+- [ ] Ensure that workers actually exit when the tracker misbehaves.
+
+- [ ] Progress reporting?
+
+- [ ] Fix free variables and bugs!
